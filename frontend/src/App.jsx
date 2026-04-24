@@ -72,6 +72,49 @@ function Column({ title, items, onCardClick, color }) {
   );
 }
 
+// ─── Reply Card ───────────────────────────────────────────────────
+function ReplyCard({ reply, type }) {
+  const styles = {
+    positive: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+    neutral: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+    none: 'border-slate-700/50 bg-slate-800/50 text-slate-400'
+  };
+  return (
+    <div className={`p-3 rounded-xl border ${styles[type]} mb-3 shadow-sm`}>
+      <div className="flex justify-between items-start mb-1">
+        <span className="font-semibold text-slate-200 text-sm">{reply.lead_name}</span>
+        <span className="text-[10px] text-slate-500">{new Date(reply.date).toLocaleDateString()}</span>
+      </div>
+      <p className="text-xs text-slate-300 italic">"{reply.text}"</p>
+    </div>
+  );
+}
+
+// ─── Replies Column ────────────────────────────────────────────────
+function ReplyColumn({ title, items, type }) {
+  const colorMap = {
+    positive: 'from-emerald-500/10 border-emerald-500/20 text-emerald-400',
+    neutral: 'from-amber-500/10 border-amber-500/20 text-amber-400',
+    none: 'from-slate-500/10 border-slate-700/50 text-slate-400',
+  };
+  const c = colorMap[type];
+
+  return (
+    <div className="bg-slate-900/50 backdrop-blur rounded-2xl flex flex-col h-full border border-slate-700/50 overflow-hidden">
+      <div className={`p-3 border-b border-slate-700/50 flex justify-between items-center bg-gradient-to-r ${c} to-transparent`}>
+        <h3 className={`font-bold text-xs uppercase tracking-wider ${c.split(' ').pop()}`}>{title}</h3>
+        <span className="bg-slate-800 text-slate-300 text-[10px] py-0.5 px-2 rounded-full font-bold border border-slate-700">
+          {items.length}
+        </span>
+      </div>
+      <div className="p-3 flex-1 overflow-y-auto max-h-[300px]">
+        {items.map(item => <ReplyCard key={item.id} reply={item} type={type} />)}
+        {items.length === 0 && <div className="text-center text-slate-600 mt-4 text-xs">No replies yet</div>}
+      </div>
+    </div>
+  );
+}
+
 // ─── Refine Button ────────────────────────────────────────────────
 function RefineBtn({ children, onClick }) {
   return (
@@ -87,7 +130,7 @@ function RefineBtn({ children, onClick }) {
 
 // ─── Profile Panel ────────────────────────────────────────────────
 function ProfilePanel({ stats, onClose }) {
-  const convRate = stats.total > 0 ? ((stats.sent / stats.total) * 100).toFixed(1) : '0.0';
+  const convRate = stats.sent > 0 ? (((stats.positive || 0) / stats.sent) * 100).toFixed(1) : '0.0';
   const respRate = stats.sent > 0 ? ((stats.replies / stats.sent) * 100).toFixed(1) : '0.0';
 
   return (
@@ -177,16 +220,14 @@ function LeadModal({ lead, aiData, loading, onClose, onRefine, onSend, onDraft }
 
             {/* Why this lead */}
             <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-              <h3 className="font-bold text-sm text-blue-400 uppercase tracking-wider mb-3">🎯 Why This Lead</h3>
-              <div className="text-sm text-slate-300 space-y-2">
-                <p><span className="text-blue-400 font-medium">Keywords:</span> {lead.matched?.join(', ') || 'None'}</p>
-                <p><span className="text-blue-400 font-medium">Intent:</span> {lead.intentFound?.join(', ') || 'None'}</p>
-                <p><span className="text-blue-400 font-medium">Score:</span> {lead.score} pts</p>
-                {aiData?.why_this_lead && (
-                  <ul className="list-disc pl-5 mt-2 space-y-1 text-slate-400">
-                    {aiData.why_this_lead.map((r, i) => <li key={i}>{r}</li>)}
-                  </ul>
-                )}
+              <h3 className="font-bold text-sm text-blue-400 uppercase tracking-wider mb-3">🎯 AI Qualification</h3>
+              <div className="text-sm text-slate-300 space-y-3">
+                <p><span className="text-blue-400 font-medium block mb-1">Reason:</span> {lead.reason || 'N/A'}</p>
+                <p><span className="text-blue-400 font-medium block mb-1">Pain Point:</span> {lead.pain_point || 'N/A'}</p>
+                <div className="flex gap-4 pt-2">
+                  <p><span className="text-blue-400 font-medium">Type:</span> <span className="capitalize">{lead.lead_type || 'Unknown'}</span></p>
+                  <p><span className="text-blue-400 font-medium">Score:</span> {lead.score} / 100</p>
+                </div>
               </div>
             </div>
 
@@ -271,7 +312,8 @@ export default function App() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [aiData, setAiData] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
-  const [stats, setStats] = useState({ sent: 0, replies: 0, total: 0 });
+  const [stats, setStats] = useState({ sent: 0, replies: 0, positive: 0, total: 0 });
+  const [replies, setReplies] = useState({ positive: [], neutral: [], none: [] });
 
   // ─── Fetch leads from backend ───────────────────────────────────
   const fetchLeads = useCallback(async () => {
@@ -302,7 +344,8 @@ export default function App() {
           lead_name: lead.lead_name,
           platform: lead.platform,
           post_content: lead.post_content,
-          keywords: (lead.matched || []).join(', '),
+          pain_point: lead.pain_point,
+          reason: lead.reason,
           instruction
         })
       });
@@ -351,10 +394,35 @@ export default function App() {
         }
       });
       if (action === 'send') {
+        const replyRand = Math.random();
+        let replyType = 'none';
+        let replyText = 'No reply yet';
+        
+        if (replyRand > 0.7) { 
+          replyType = 'positive'; 
+          replyText = "Thanks, this looks interesting. Let's connect."; 
+        } else if (replyRand > 0.4) { 
+          replyType = 'neutral'; 
+          replyText = "Will check and get back."; 
+        }
+        
+        const newReply = { 
+          id: selectedLead.id, 
+          lead_name: selectedLead.lead_name, 
+          text: replyText, 
+          date: new Date().toISOString() 
+        };
+        
+        setReplies(prev => ({
+          ...prev,
+          [replyType]: [newReply, ...prev[replyType]]
+        }));
+
         setStats(prev => ({
           ...prev,
           sent: prev.sent + 1,
-          replies: prev.replies + (Math.random() > 0.7 ? 1 : 0)
+          replies: prev.replies + (replyType !== 'none' ? 1 : 0),
+          positive: (prev.positive || 0) + (replyType === 'positive' ? 1 : 0)
         }));
         fetch(`${API}/stats/send`, { method: 'POST' });
       }
@@ -364,7 +432,7 @@ export default function App() {
     }, 1500);
   };
 
-  const convRate = stats.total > 0 ? ((stats.sent / stats.total) * 100).toFixed(1) : '0.0';
+  const convRate = stats.sent > 0 ? (((stats.positive || 0) / stats.sent) * 100).toFixed(1) : '0.0';
   const respRate = stats.sent > 0 ? ((stats.replies / stats.sent) * 100).toFixed(1) : '0.0';
 
   return (
@@ -395,7 +463,7 @@ export default function App() {
       </header>
 
       {/* ─── Main ────────────────────────────────────────────────── */}
-      <main className="flex-1 p-6 flex flex-col gap-5 overflow-hidden">
+      <main className="flex-1 p-6 flex flex-col gap-5 overflow-y-auto">
         {/* Controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
@@ -407,7 +475,7 @@ export default function App() {
                 <span>Source: <span className="text-slate-400 font-medium">{dataSource}</span></span>
                 {filterStats && (
                   <span className="text-emerald-400/90 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                    Filtered {filterStats.initial} posts → Showing {filterStats.final} relevant leads
+                    Scanned {filterStats.initial} posts → Showing {filterStats.final} relevant leads
                   </span>
                 )}
               </div>
@@ -426,10 +494,22 @@ export default function App() {
         </div>
 
         {/* Kanban Board */}
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-5 overflow-hidden" style={{ minHeight: 0 }}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5" style={{ minHeight: '400px' }}>
           <Column title="Leads" items={columns.leads} onCardClick={openLead} color="blue" />
           <Column title="Drafts" items={columns.drafts} onCardClick={openLead} color="amber" />
           <Column title="Contacted" items={columns.contacted} onCardClick={openLead} color="green" />
+        </div>
+
+        {/* Replies Section */}
+        <div className="mt-4 border-t border-slate-800 pt-6 pb-10">
+          <h2 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-5 flex items-center gap-2">
+            💬 Replies Analytics
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <ReplyColumn title="Positive" items={replies.positive} type="positive" />
+            <ReplyColumn title="Neutral" items={replies.neutral} type="neutral" />
+            <ReplyColumn title="No Response" items={replies.none} type="none" />
+          </div>
         </div>
       </main>
 
